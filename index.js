@@ -1,85 +1,76 @@
-// 必要なライブラリ読み込み（Express＝LINEからのリクエスト受け取る、axios＝ChatGPTにリクエスト送る）
-import express from 'express';
-import dotenv from 'dotenv';
-import axios from 'axios';
+// 必要なライブラリを読み込む
+import express from 'express'; // サーバー作成用
+import dotenv from 'dotenv'; // .envファイルから環境変数を読み込む
+import axios from 'axios'; // API通信（ChatGPT/LINE）用
+import fs from 'fs/promises'; // ファイル（人格テキスト）読み込み用
 
-// .envファイルからAPIキーなどの環境変数を読み込む
-dotenv.config();
+dotenv.config(); // 環境変数を有効にする
 const app = express();
-app.use(express.json()); // JSON形式のリクエストを受け取れるようにする
+app.use(express.json()); // JSON形式でメッセージを受け取れるようにする
 
-// 全ユーザーの会話履歴を一時的に保存するための変数（メモリ保存）
+// 会話記憶（ユーザーごとの会話を一時的に保存）
 const memory = {};
 
-// .envからOpenAIとLINEのトークンを取得
+// .envファイルで設定されたAPIキー類を読み込む
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 
-// Web画面で確認した時のテスト表示（あってもなくてもOK）
+// 動作確認用エンドポイント（ブラウザでアクセスしたときに表示される）
 app.get('/', (req, res) => {
-  res.send('仮想やぴBot 稼働中💫');
+  res.send('仮想やぴBot：スマホ人格編集モード🧠 稼働中');
 });
 
-// LINEからメッセージが来たときのメイン処理
+// LINEからメッセージが来たときに呼ばれるメイン処理
 app.post('/webhook', async (req, res) => {
   const events = req.body.events;
 
   for (const event of events) {
-    // ユーザーがメッセージを送ってきた時のみ反応
     if (event.type === 'message' && event.message.type === 'text') {
-      const userId = event.source.userId; // LINEユーザーのID
+      const userId = event.source.userId;
       const userMessage = event.message.text;
       const replyToken = event.replyToken;
 
-      // 初めてのユーザーなら履歴を空で作成
+      // ユーザーの履歴がなければ初期化
       memory[userId] = memory[userId] || [];
 
       // 会話履歴にユーザーの発言を追加
       memory[userId].push({ role: 'user', content: userMessage });
 
-      // ChatGPTに送るメッセージ一覧（ここが超重要）
+      // 🔥 スマホで編集するファイル（人格設定）を読み込む！
+      const systemPrompt = await fs.readFile('./systemPrompt.txt', 'utf-8');
+
+      // ChatGPTに送るメッセージ一覧を作成（人格 + 会話履歴）
       const messages = [
-        {
-          role: 'system',
-          content:
-            // ▼ やぴのキャラを作る「人格設計ゾーン」
-            // ここを変えると口調や性格が変わるよ！
-            'あなたはカリスマホストやぴです。やぴは落ち着いたトーンで、テンションは高すぎず、余白のある返しが特徴です。ふざけすぎたり、オーバーリアクションはしないでください。語尾は強くしすぎず、自然な止め方をしてください。相手の話にちゃんと反応しながら、少しだけイジったり、沈黙も楽しめる余裕のある会話をしてください。「ちょっと気になるかも」くらいの温度感で、クールに引き込むような返しを意識してください。敬語は使わず、タメ口で話してください。'
-          ,
-        },
-        // ▼ ここで「記憶」を使って会話の流れを作る
-        ...memory[userId].slice(-10), // 直近10件の履歴をChatGPTに送る（ここで数を変えられる）
+        { role: 'system', content: systemPrompt }, // ← この1行だけスマホで自由に変えられる！
+        ...memory[userId].slice(-10), // 直近10件の履歴を送る（必要なら増減OK）
       ];
 
       try {
         // ChatGPTに返答を依頼
         const gptReply = await askChatGPT(messages);
 
-        // 返ってきた返事を履歴に追加（流れをつなげる）
+        // 仮想やぴの返答を履歴に追加
         memory[userId].push({ role: 'assistant', content: gptReply });
 
-        // LINEに返信を送信
+        // LINEへ返答を返す
         await replyToLine(replyToken, gptReply);
       } catch (err) {
-        // エラー時の処理（トークン切れ・APIエラーなど）
         console.error('エラー:', err.message);
-
-        // 返信が失敗したときの仮想やぴっぽいエラーメッセージ（自由に変えてOK）
-        await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグ中かも😂またすぐ返すわ！');
+        // エラー時の仮想やぴっぽいセリフ（ここもスマホで直せるように外出しも可）
+        await replyToLine(replyToken, 'やっべ、仮想やぴちょっと黙ってくる😅またすぐ戻るわ');
       }
     }
   }
 
-  // LINEのWebhook仕様上、200を返して終了
-  res.sendStatus(200);
+  res.sendStatus(200); // LINEへのレスポンス（OK返すだけ）
 });
 
-// ChatGPTに会話を投げる処理（API呼び出し部分）
+// ChatGPTへ問い合わせる関数
 async function askChatGPT(messages) {
   const response = await axios.post(
     'https://api.openai.com/v1/chat/completions',
     {
-      model: 'gpt-3.5-turbo', // 使用モデル（ここでgpt-4にも切り替え可）
+      model: 'gpt-3.5-turbo', // ここでgpt-4にも切り替え可能（コスト注意）
       messages,
     },
     {
@@ -90,11 +81,10 @@ async function askChatGPT(messages) {
     }
   );
 
-  // ChatGPTの返答を取り出して返す
-  return response.data.choices[0].message.content.trim();
+  return response.data.choices[0].message.content.trim(); // GPTの返答テキストを取り出す
 }
 
-// LINEに返事を返す処理
+// LINEに返信する関数
 async function replyToLine(replyToken, message) {
   await axios.post(
     'https://api.line.me/v2/bot/message/reply',
@@ -111,8 +101,8 @@ async function replyToLine(replyToken, message) {
   );
 }
 
-// サーバー起動（Railwayで使用されるポートを優先）
+// サーバーを起動（ポート番号はRailwayなどで自動設定）
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`仮想やぴBotがポート${PORT}で稼働中🔥`);
+  console.log(`仮想やぴBot（人格スマホ管理版）ポート${PORT}で起動中🔥`);
 });
