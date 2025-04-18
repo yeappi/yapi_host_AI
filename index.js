@@ -1,17 +1,17 @@
-// line_chatgpt_bot/index.js
-
 import express from 'express';
-import bodyParser from 'body-parser';
-import axios from 'axios';
 import dotenv from 'dotenv';
+import axios from 'axios';
+
 dotenv.config();
-
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
-const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
-const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
+
+app.get('/', (req, res) => {
+  res.send('仮想やぴBot 起動中🦋');
+});
 
 app.post('/webhook', async (req, res) => {
   const events = req.body.events;
@@ -22,56 +22,45 @@ app.post('/webhook', async (req, res) => {
       const replyToken = event.replyToken;
 
       try {
-        const gptReply = await generateGPTReply(userMessage);
-        await replyToLINE(replyToken, gptReply);
-      } catch (error) {
-        console.error('エラー:', error);
+        const gptReply = await askChatGPT(userMessage);
+        await replyToLine(replyToken, gptReply);
+      } catch (err) {
+        console.error('エラー:', err.message);
+        await replyToLine(replyToken, 'ごめんね、仮想やぴいまちょっとバグってるかも🥺');
       }
     }
   }
+
   res.sendStatus(200);
 });
 
-async function generateGPTReply(message) {
-  const response = await axios.post(
-    'https://api.openai.com/v1/chat/completions',
-    {
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: 'あなたはホスト「やぴ」として、甘く軽妙なトークで相手に返信してください。',
-        },
-        {
-          role: 'user',
-          content: message,
-        },
-      ],
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
+async function askChatGPT(userMessage) {
+  const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+    model: 'gpt-3.5-turbo',
+    messages: [
+      { role: 'system', content: 'あなたはカリスマホストやぴとして、甘くて本音っぽい口調で返信します。' },
+      { role: 'user', content: userMessage }
+    ]
+  }, {
+    headers: {
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json'
     }
-  );
+  });
+
   return response.data.choices[0].message.content.trim();
 }
 
-async function replyToLINE(replyToken, message) {
-  await axios.post(
-    'https://api.line.me/v2/bot/message/reply',
-    {
-      replyToken: replyToken,
-      messages: [{ type: 'text', text: message }],
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${LINE_ACCESS_TOKEN}`,
-      },
+async function replyToLine(replyToken, message) {
+  await axios.post('https://api.line.me/v2/bot/message/reply', {
+    replyToken,
+    messages: [{ type: 'text', text: message }]
+  }, {
+    headers: {
+      'Authorization': `Bearer ${LINE_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
     }
-  );
+  });
 }
 
 const PORT = process.env.PORT || 3000;
