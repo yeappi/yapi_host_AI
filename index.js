@@ -46,6 +46,11 @@ app.post('/webhook', async (req, res) => {
         },
         ...memory[userId].slice(-10), // 直近の履歴だけ使ってGPTに送る
       ];
+      
+      //ここに予備の人格を保管しておく
+      /*
+      
+      */
 
       try {
         // ChatGPTに問い合わせて返答をもらう
