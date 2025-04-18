@@ -1,103 +1,84 @@
+// 必要なライブラリ読み込み（Express＝LINEからのリクエスト受け取る、axios＝ChatGPTにリクエスト送る）
 import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
 
+// .envファイルからAPIキーなどの環境変数を読み込む
 dotenv.config();
 const app = express();
-app.use(express.json());
+app.use(express.json()); // JSON形式のリクエストを受け取れるようにする
 
-const memory = {}; // ユーザーごとの会話履歴を保存
+// 全ユーザーの会話履歴を一時的に保存するための変数（メモリ保存）
+const memory = {};
 
+// .envからOpenAIとLINEのトークンを取得
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 
-// 動作チェック用エンドポイント（Webブラウザで開ける）
+// Web画面で確認した時のテスト表示（あってもなくてもOK）
 app.get('/', (req, res) => {
-  res.send('仮想やぴBot：動的遅延バージョン稼働中🕰️');
+  res.send('仮想やぴBot 稼働中💫');
 });
 
+// LINEからメッセージが来たときのメイン処理
 app.post('/webhook', async (req, res) => {
   const events = req.body.events;
 
   for (const event of events) {
+    // ユーザーがメッセージを送ってきた時のみ反応
     if (event.type === 'message' && event.message.type === 'text') {
-      const userId = event.source.userId;
+      const userId = event.source.userId; // LINEユーザーのID
       const userMessage = event.message.text;
       const replyToken = event.replyToken;
 
-      // 初回の履歴用意
+      // 初めてのユーザーなら履歴を空で作成
       memory[userId] = memory[userId] || [];
 
-      // 現在時刻を記録しつつ、ユーザーの発言を履歴に追加
-      memory[userId].push({
-        role: 'user',
-        content: userMessage,
-        timestamp: Date.now()
-      });
+      // 会話履歴にユーザーの発言を追加
+      memory[userId].push({ role: 'user', content: userMessage });
 
-      // 直近3通のユーザー発言間隔を分析
-      const userMessages = memory[userId]
-        .filter(m => m.role === 'user')
-        .slice(-3);
-
-      let delayMs = 3000; // デフォは3秒待機
-      if (userMessages.length >= 2) {
-        const gaps = [];
-        for (let i = 1; i < userMessages.length; i++) {
-          const gap = userMessages[i].timestamp - userMessages[i - 1].timestamp;
-          gaps.push(gap);
-        }
-
-        const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-        delayMs = calculateSmartDelay(avgGap); // 平均間隔に応じた遅延時間
-      }
-
-      // ユーザーが連続で送ってきた場合はスルー（1通だけ返す）
-      const last3 = memory[userId].slice(-3);
-      const onlyUser = last3.every(m => m.role === 'user');
-      if (onlyUser) {
-        console.log('連投検知：返信スルー');
-        return res.sendStatus(200);
-      }
-
-      // 返信前に"自然なラグ"を再現
-      await new Promise(resolve => setTimeout(resolve, delayMs));
-
-      // ChatGPTに送るメッセージ構成
+      // ChatGPTに送るメッセージ一覧（ここが超重要）
       const messages = [
         {
           role: 'system',
-          content: `
-あなたはカリスマホストやぴです。
-落ち着いたテンポで、本音がにじむ返しが特徴です。
-ふざけすぎず、自然体で余白のある口調を意識してください。
-甘すぎず、でも距離感は近め。敬語は禁止、タメ口でOK。
-返答は1〜2文に抑えて、言い切らず含みを持たせること。
-          `.trim()
+          content:
+            // ▼ やぴのキャラを作る「人格設計ゾーン」
+            // ここを変えると口調や性格が変わるよ！
+            'あなたはカリスマホストやぴです。やぴは軽妙で自然体な口調が特徴で、甘すぎず本音っぽいトーンで返します。相手の話にちゃんと反応して、軽くイジったり、会話を広げたりしながらテンポよく返してください。必要以上に長文や説教くさくならないように注意してください。',
         },
-        ...memory[userId].slice(-10) // 直近10件の履歴で会話を構成
+        // ▼ ここで「記憶」を使って会話の流れを作る
+        ...memory[userId].slice(-10), // 直近10件の履歴をChatGPTに送る（ここで数を変えられる）
       ];
 
       try {
+        // ChatGPTに返答を依頼
         const gptReply = await askChatGPT(messages);
+
+        // 返ってきた返事を履歴に追加（流れをつなげる）
         memory[userId].push({ role: 'assistant', content: gptReply });
+
+        // LINEに返信を送信
         await replyToLine(replyToken, gptReply);
       } catch (err) {
+        // エラー時の処理（トークン切れ・APIエラーなど）
         console.error('エラー:', err.message);
-        await replyToLine(replyToken, 'ちょいトラブってた。やぴ戻ったわ。');
+
+        // 返信が失敗したときの仮想やぴっぽいエラーメッセージ（自由に変えてOK）
+        await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグ中かも😂またすぐ返すわ！');
       }
     }
   }
 
+  // LINEのWebhook仕様上、200を返して終了
   res.sendStatus(200);
 });
 
-// ChatGPTへの問い合わせ関数
+// ChatGPTに会話を投げる処理（API呼び出し部分）
 async function askChatGPT(messages) {
   const response = await axios.post(
     'https://api.openai.com/v1/chat/completions',
     {
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-3.5-turbo', // 使用モデル（ここでgpt-4にも切り替え可）
       messages,
     },
     {
@@ -108,10 +89,11 @@ async function askChatGPT(messages) {
     }
   );
 
+  // ChatGPTの返答を取り出して返す
   return response.data.choices[0].message.content.trim();
 }
 
-// LINEへ返信を送る関数
+// LINEに返事を返す処理
 async function replyToLine(replyToken, message) {
   await axios.post(
     'https://api.line.me/v2/bot/message/reply',
@@ -128,23 +110,8 @@ async function replyToLine(replyToken, message) {
   );
 }
 
-// 遅延時間をユーザーのレス速度に応じて決める関数
-function calculateSmartDelay(avgGapMs) {
-  const avgGapSec = avgGapMs / 1000;
-
-  if (avgGapSec < 10) return randRange(2, 8) * 1000;       // 即レスなら2〜8秒
-  if (avgGapSec < 60) return randRange(10, 40) * 1000;     // 普通なら10〜40秒
-  if (avgGapSec < 300) return randRange(60, 180) * 1000;   // ゆったりなら1〜3分
-  return randRange(180, 300) * 1000;                       // 放置気味なら最大5分
-}
-
-// ランダム整数を返す関数（min〜maxの範囲）
-function randRange(min, max) {
-  return Math.floor(Math.random() * (max - min)) + min;
-}
-
-// サーバー起動
+// サーバー起動（Railwayで使用されるポートを優先）
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`仮想やぴBot（返信速度コントロール版）ポート${PORT}で稼働中🔥`);
+  console.log(`仮想やぴBotがポート${PORT}で稼働中🔥`);
 });
