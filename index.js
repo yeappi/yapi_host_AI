@@ -68,10 +68,9 @@ app.post('/webhook', async (req, res) => {
 - 表面的なテンプレ共感や過度な演出は避け、「ちゃんと見てる感」を優先する。  
 
 文字数は基本的には50文字まで。自然な会話に近づけるためになら80文字、どうしても説明を完結させるために重要度が高い場合は例外的に140文字まで可能。
-
           `,
         },
-        ...memory[userId].slice(-10),
+        ...memory[userId].slice(-10), // メッセージの履歴を最大10件に制限
       ];
 
       try {
@@ -80,8 +79,7 @@ app.post('/webhook', async (req, res) => {
         // 会話履歴に追加
         memory[userId].push({ role: 'assistant', content: gptReply });
 
-
-        await replyToLineMulti(replyToken, sentences);
+        await replyToLine(replyToken, gptReply); // 1通で返信
       } catch (err) {
         console.error('エラー:', err.message);
         await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグ中かも😂またすぐ返すわ！');
@@ -127,46 +125,6 @@ async function replyToLine(replyToken, message) {
     }
   );
 }
-
-// 複数メッセージを順に送信する関数（1秒間隔）
-async function replyToLineMulti(replyToken, messages) {
-  if (messages.length === 0) return;
-
-  // 最初の1通はreplyTokenで送信（必要仕様）
-  await replyToLine(replyToken, messages[0]);
-
-  // 2通目以降はpushMessageで送信
-  for (let i = 1; i < messages.length; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 1000)); // 1秒待機
-    await axios.post(
-      'https://api.line.me/v2/bot/message/push',
-      {
-        to: replyTokenUserMap[replyToken], // ↓追記されるマップ参照
-        messages: [{ type: 'text', text: messages[i] }],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${LINE_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  }
-}
-
-// replyToken → userId のマッピング（最初のメッセージ時に記録）
-const replyTokenUserMap = {};
-app.use((req, res, next) => {
-  const events = req.body.events;
-  if (events && Array.isArray(events)) {
-    for (const event of events) {
-      if (event.replyToken && event.source && event.source.userId) {
-        replyTokenUserMap[event.replyToken] = event.source.userId;
-      }
-    }
-  }
-  next();
-});
 
 // サーバー起動
 const PORT = process.env.PORT || 3000;
