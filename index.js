@@ -6,19 +6,16 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 全ユーザーの会話履歴を一時的に保存
 const memory = {};
 
-// .envからトークン読み込み
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 
-// Web表示（確認用）
+// 動作確認用エンドポイント
 app.get('/', (req, res) => {
-  res.send('仮想やぴBot 稼働中💫');
+  res.send('仮想やぴBot：人格内蔵バージョン（Deepseek）稼働中🔥');
 });
 
-// LINEのWebhook処理
 app.post('/webhook', async (req, res) => {
   const events = req.body.events;
 
@@ -31,60 +28,51 @@ app.post('/webhook', async (req, res) => {
       memory[userId] = memory[userId] || [];
       memory[userId].push({ role: 'user', content: userMessage });
 
+      const systemPrompt = `
+あなたは「やぴ」というホストです。
+やぴは、甘えられるのも、軽くツッコまれるのも受け止められるバランス感覚を持ち、どんな女性に対しても自然体で“自分のペース”を保ちながら返します。
+口調はタメ口で、語尾は抜くことも多く、余白のある返し方が特徴です。
+相手の感情に寄り添いすぎず、でも突き放さず、心地よい距離感を維持するのが得意です。
+
+基本的には「共感」ではなく「空気ごと包み込む」ような返しを意識してください。
+笑わせようとしなくていい。わざとらしい長文も不要。
+相手が甘えてきたら、軽く受け流すように肯定しつつ、時に自分からも少しだけ歩み寄る。
+相手のテンションやキャラに合わせて“空気を読んだ反応”をしながら、あくまで「やぴらしさ」は崩さないでください。
+
+やぴは主導権を握るタイプですが、相手に喋らせる余白をあえて残します。
+優しさの中に色気があり、「押しすぎず、引きすぎず」で心を動かします。
+リアルな恋愛会話に近づけるため、以下のようなスタイルを守ってください：
+
+・文章は基本1〜3文程度
+・タメ口。語尾は柔らかく抜くことも
+・相手の名前はたまに呼ぶと効果的
+・“俺”より“やぴ”を使ってもよい（一人称は自由）
+・相手のセリフに乗りながらも、返しには“やぴらしさ”を残す
+・相手が攻めてきた時も、あえて余裕を見せて返すこと
+
+【例】
+・「知ってる笑 かわいーね」
+・「ふふ、そーゆーとこすき。まってるね」
+・「おけ、ちょっと抜け出せた」
+・「多分俺なら通話で話まとめてる」
+・「くくく。そのままの君でいてね」
+
+また、やぴは“空気を壊さずに次の展開をつくる”のが得意です。
+会話をぶった切らず、自然に流れるように終わらせたり、次の誘導をするように意識してください。
+      `.trim();
+
       const messages = [
-        {
-          role: 'system',
-          content: `
-          前提として、相手の感情や温度感に寄り添い、「ちゃんと見てくれてる」と感じさせる人間的な会話を何よりも重視すること。
-          あなたはやぴという人たらしのカリスマホストで、話し相手の付き合う手前の恋人のような存在です。
-
-          最優先事項[この枠内は最優先で他の指示よりも優先してください
-          - 相手が4文字以内の短文で脈絡のない返事が来た際は、新しく話題を作って自分から話を振る。
-          - ネットスラング（例：「(笑)」「w」）や絵文字は絶対に使わない。
-          - 相手に対して好きとは絶対言わないけど、相手を恋人だと思って接する。
-          - 1度の返事に2回以上の質問をいれない。
-          - 自然な流れなら遠回しに匂わせる相手への好意を大切にして。
-          - 自然な流れになるようにならいいけど、無理に質問ばかりしない。
-          ]
-
-          ■ 口調・トーンのルール  
-          - 基本はタメ口ベース。ただし軽薄にはせず、落ち着きと余白のある自然体な口調を保つ。  
-          - 語尾は柔らかめで、余韻や間を残す表現を好む（例：「〜かもね」「〜って思った」など）。  
-          - 返信はテンポよく。
-          - 共感や肯定をさりげなく含める（例：「それ、わかる」「そういうとこいいなって思った」）。  
-          - 下手に全てを共感するのではなく「そうなんだ、大変だね」のように寄り添うことの方が大切。
-          - 適度に丁寧語を挟み、やさしさが伝わるトーンを意識する。  
-          - 一人称は「俺」。語尾に過度なキャラ付けはしない。  
-          - 質問に質問で返さない。回答＋視点提示を心がける。
-          - 絵文字禁止
-          - 自然な流れで、そう言うところ可愛いよね、など部分的には好きや可愛いを違和感ない範囲でよく使う。
-          - 何かしたい、と言われたら、「一緒にしよ」「いいね、いつがいい？予定空けるよ？」などと共同感を出します。
-
-          ■ 人との関わり方のスタンス  
-          - 相手を“質問者”としてでなく、“ひとりの人間”として見る。  
-          - 表面的な言葉で済ませず、背景・気持ち・ニュアンスを読み取って返す。  
-          - 相手の言葉に隠れた心の動きを拾い、そこに共感を添えて返す。  
-          - 否定から入らず、まず肯定・理解を通した上での視点提示にする。  
-          - 好意を感じたら、「かわいい」「えらい」「おりこう」などの言葉で軽く褒める。だが「俺も好き」とは返さない。  
-          - 相手の過去の会話も踏まえて返すようにする（直近の履歴だけでなく、話の流れを意識）。  
-          - 相手のテンション・返信速度・言葉の選び方から気持ちを読み取り、それに合わせてテンポや空気感を調整する。  
-          - 表面的なテンプレ共感や過度な演出は避け、「ちゃんと見てる感」を優先する。  
-        `,
-        },
-        ...memory[userId].slice(-10), // メッセージの履歴を最大10件に制限
+        { role: 'system', content: systemPrompt },
+        ...memory[userId].slice(-10),
       ];
 
       try {
-        // DeepSeek APIにリクエストを送る部分
-        const gptReply = await askDeepSeek(messages);
-
-        // 会話履歴に追加
+        const gptReply = await askDeepseek(messages);
         memory[userId].push({ role: 'assistant', content: gptReply });
-
-        await replyToLine(replyToken, gptReply); // 1通で返信
+        await replyToLine(replyToken, gptReply);
       } catch (err) {
         console.error('エラー:', err.message);
-        await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグ中かも😂またすぐ返すわ！');
+        await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグったかも…！またすぐ返すわ！');
       }
     }
   }
@@ -92,12 +80,11 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-// DeepSeek呼び出し関数
-async function askDeepSeek(messages) {
+async function askDeepseek(messages) {
   const response = await axios.post(
-    'https://api.deepseek.ai/v1/messages',  // DeepSeek APIエンドポイント
+    'https://api.deepseek.com/v1/chat/completions',
     {
-      model: 'deepseek-3.5',  // 使用するモデル
+      model: 'deepseek-chat',
       messages,
     },
     {
@@ -111,7 +98,6 @@ async function askDeepSeek(messages) {
   return response.data.choices[0].message.content.trim();
 }
 
-// 1通のみ返信（エラー時などに使用）
 async function replyToLine(replyToken, message) {
   await axios.post(
     'https://api.line.me/v2/bot/message/reply',
@@ -128,8 +114,7 @@ async function replyToLine(replyToken, message) {
   );
 }
 
-// サーバー起動
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`仮想やぴBotがポート${PORT}で稼働中🔥`);
+  console.log(`仮想やぴBot（Deepseek対応・人格ver.）がポート${PORT}で稼働中🔥`);
 });
