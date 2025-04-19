@@ -66,8 +66,12 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
+console.log('sending to OpenRouter:', {
+  model: 'deepseek-chat',
+  messages
+});
 // Deepseek（OpenRouter）経由で会話
-async function askDeepseek(messages) {
+async function askChatGPT(messages) {
   const response = await axios.post(
     'https://openrouter.ai/api/v1/chat/completions',
     {
@@ -76,10 +80,10 @@ async function askDeepseek(messages) {
     },
     {
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
-        // 任意だが、OpenRouter推奨（あなたのサービスURLを入れてもOK）
-        'HTTP-Referer': 'https://yoursite.example.com',
+        'HTTP-Referer': 'https://yourdomain.com', // 任意の自サイトURLに変えてOK
+        'X-Title': 'yapIA Host Chat' // 任意タイトル
       },
     }
   );
@@ -103,6 +107,8 @@ async function replyToLine(replyToken, message) {
     }
   );
 }
+
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
