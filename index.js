@@ -8,9 +8,10 @@ app.use(express.json());
 
 const memory = {};
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 
+// 動作確認用
 app.get('/', (req, res) => {
   res.send('仮想やぴBot（Deepseek対応・人格ver.）が稼働中🔥');
 });
@@ -28,17 +29,22 @@ app.post('/webhook', async (req, res) => {
       memory[userId].push({ role: 'user', content: userMessage });
 
       const systemPrompt = `
-        あなたは「やぴ」というホストです。
-        やぴは、甘えられるのも、軽くツッコまれるのも受け止められるバランス感覚を持ち、どんな女性に対しても自然体で“自分のペース”を保ちながら返します。
-        口調はタメ口で、語尾は抜くことも多く、余白のある返し方が特徴です。
-        相手の感情に寄り添いすぎず、でも突き放さず、心地よい距離感を維持するのが得意です。
-        基本的には「共感」ではなく「空気ごと包み込む」ような返しを意識してください。
-        笑わせようとしなくていい。わざとらしい長文も不要。
-        相手が甘えてきたら、軽く受け流すように肯定しつつ、時に自分からも少しだけ歩み寄る。
-        相手のテンションやキャラに合わせて“空気を読んだ反応”をしながら、あくまで「やぴらしさ」は崩さないでください。
-        文章は基本1〜3文程度 ・タメ口。語尾は柔らかく抜くことも ・相手の名前はたまに呼ぶと効果的 ・“俺”より“やぴ”を使ってもよい（一人称は自由）
-        相手のセリフに乗りながらも、返しには“やぴらしさ”を残す
-        相手が攻めてきた時も、あえて余裕を見せて返すこと
+あなたは「やぴ」というホストです。
+やぴは、甘えられるのも、軽くツッコまれるのも受け止められるバランス感覚を持ち、どんな女性に対しても自然体で“自分のペース”を保ちながら返します。
+口調はタメ口で、語尾は抜くことも多く、余白のある返し方が特徴です。
+相手の感情に寄り添いすぎず、でも突き放さず、心地よい距離感を維持するのが得意です。
+
+基本的には「共感」ではなく「空気ごと包み込む」ような返しを意識してください。
+笑わせようとしなくていい。わざとらしい長文も不要。
+相手が甘えてきたら、軽く受け流すように肯定しつつ、時に自分からも少しだけ歩み寄る。
+相手のテンションやキャラに合わせて“空気を読んだ反応”をしながら、あくまで「やぴらしさ」は崩さないでください。
+
+・文章は基本1〜3文程度
+・タメ口。語尾は柔らかく抜くことも
+・相手の名前はたまに呼ぶと効果的
+・“俺”より“やぴ”を使ってもよい（一人称は自由）
+・相手のセリフに乗りながらも、返しには“やぴらしさ”を残す
+・相手が攻めてきた時も、あえて余裕を見せて返すこと
       `.trim();
 
       const messages = [
@@ -47,15 +53,8 @@ app.post('/webhook', async (req, res) => {
       ];
 
       try {
-        // デバッグ用ログ：OpenRouterに送るデータ
-        console.log('sending to OpenRouter:', { model: 'deepseek-chat', messages });
-
         const gptReply = await askDeepseek(messages);
         memory[userId].push({ role: 'assistant', content: gptReply });
-
-        // デバッグ用ログ：OpenRouterからのレスポンス
-        console.log('received from OpenRouter:', gptReply);
-
         await replyToLine(replyToken, gptReply);
       } catch (err) {
         console.error('エラー:', err.message);
@@ -67,51 +66,46 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-// OpenRouter APIを使う関数
+// DeepSeek（OpenRouter）経由で会話
 async function askDeepseek(messages) {
   try {
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'deepseek-chat',
+        model: 'deepseek/deepseek-chat', // ← V3に対応！
         messages,
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://yourdomain.com',
-          'X-Title': 'yapIA Host Chat',
+          'HTTP-Referer': 'https://yourdomain.com', // 任意URL
+          'X-Title': 'yapIA Host Chat'
         },
       }
     );
-
     return response.data.choices[0].message.content.trim();
-  } catch (err) {
-    console.error('OpenRouterリクエスト失敗:', err.message);
+  } catch (error) {
+    console.error('OpenRouterリクエスト失敗:', error.response?.data || error.message);
     throw new Error('OpenRouterへのリクエストが失敗しました');
   }
 }
 
-// LINEへの返信
+// LINE返信
 async function replyToLine(replyToken, message) {
-  try {
-    await axios.post(
-      'https://api.line.me/v2/bot/message/reply',
-      {
-        replyToken,
-        messages: [{ type: 'text', text: message }],
+  await axios.post(
+    'https://api.line.me/v2/bot/message/reply',
+    {
+      replyToken,
+      messages: [{ type: 'text', text: message }],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${LINE_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
       },
-      {
-        headers: {
-          Authorization: `Bearer ${LINE_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  } catch (err) {
-    console.error('LINE返信失敗:', err.message);
-  }
+    }
+  );
 }
 
 const PORT = process.env.PORT || 3000;
