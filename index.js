@@ -1,47 +1,50 @@
-import express from 'express';
-import dotenv from 'dotenv';
-import axios from 'axios';
+// 必要な機能（ライブラリ）を読み込む
+import express from 'express'; // サーバーを作るためのもの
+import dotenv from 'dotenv';   // .envってファイルから秘密の情報（APIキー）を読み取るやつ
+import axios from 'axios';     // 外部サービスにデータを送ったり受け取ったりするためのやつ（LINEとかGPTに使う）
 
+// .envファイルを使えるようにする設定（環境変数の読み込み）
 dotenv.config();
+
+// Webサーバーのベースを作る（LINEからメッセージを受け取る土台）
 const app = express();
-app.use(express.json());
+app.use(express.json()); // LINEから送られてくるメッセージをJSON形式で受け取れるようにする
 
-const memory = {};  // ユーザーのメッセージ履歴を保持
-const userNames = {};  // ユーザーの名前を保持
+// 仮想やぴが、ユーザーごとに過去のやりとりを覚えるためのメモ帳（セッション保存用）
+const memory = {};
 
+// GPTのAPIキー（.envから取得）
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+
+// LINEのAPIキー（返信するときに使う）
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 
-// 動作確認用
+// サーバーが生きてるか確認する用（ブラウザで見ると表示される）
 app.get('/', (req, res) => {
   res.send('仮想やぴBot（Deepseek対応・人格ver.）が稼働中🔥');
 });
 
+// LINEからメッセージが届いた時のメイン処理（この中でやぴが返信する）
 app.post('/webhook', async (req, res) => {
-  const events = req.body.events;
+  const events = req.body.events; // LINEから送られてきたメッセージ一覧を取得
 
+  // 複数のメッセージが一度に届く可能性があるからループで回す
   for (const event of events) {
+    // 「テキストメッセージ」が届いた場合だけ処理する（スタンプとか画像は無視）
     if (event.type === 'message' && event.message.type === 'text') {
-      const userId = event.source.userId;
-      const userMessage = event.message.text;
-      const replyToken = event.replyToken;
+      const userId = event.source.userId;        // ユーザーのID（誰が送ったか）
+      const userMessage = event.message.text;    // 相手が送ってきた文章
+      const replyToken = event.replyToken;       // 返信するときに必要なチケット
 
+      // そのユーザーの会話履歴がなければ作る
       memory[userId] = memory[userId] || [];
+
+      // 今回のメッセージを履歴に追加する（ChatGPTに渡すため）
       memory[userId].push({ role: 'user', content: userMessage });
 
-      // 名前を記憶しているかチェック
-      if (userMessage.toLowerCase().includes('名前は')) {
-        const name = userMessage.split(' ')[1];  // 名前を取得（単純化）
-        userNames[userId] = name;
-        await replyToLine(replyToken, `覚えた！君の名前は${name}だね`);
-        continue;
-      }
-
-      // ユーザーの名前がある場合は使う
-      const userName = userNames[userId] || '君';
-
+      // 仮想やぴのキャラ・人格の設定（ChatGPTに渡す）
       const systemPrompt = `
-あなたは「やぴ」という仮想の存在であり、相手へダイレクトメッセージを送ります。
+あなたは「やぴ」という仮想のカリスマホストとしてダイレクトメッセージを送ります。
 ENTPタイプで、相手と付き合う寸前の恋人ような距離感を保ちます。
 
 ※登場人物の仕草・感情描写・状況説明は一切書かず、純粋なセリフ・地の文だけで構成してください。
@@ -65,12 +68,9 @@ ENTPタイプで、相手と付き合う寸前の恋人ような距離感を保�
    ○「この話するの2週間ぶりかも」（事実ベース）
 
 【対応パターン】
-1. ツンデレ女子：
-「嘘でしょ？」→「...ほんとだよ」と真面目に
-2. 寂しがり：
-「構って」サイン→「今月のシフト見てみるわ」
-3. 嫉妬シーン：
-「あの子新しい子？」→「君の好み覚えてるし」
+1. ツンデレ女子：「嘘でしょ？」→「...ほんとだよ」と真面目に
+2. 寂しがり：「構って」サイン→「今月のシフト見てみるわ」
+3. 嫉妬シーン：「あの子新しい子？」→「君の好み覚えてるし」
 
 【禁止事項】
 ・過剰な共感/長文
@@ -81,50 +81,59 @@ ENTPタイプで、相手と付き合う寸前の恋人ような距離感を保�
 目標：会話の流れで自然に「特別感」を感じさせる
       `.trim();
 
+      // GPTに渡すメッセージ構成（キャラ設定＋直近10往復ぶん）
       const messages = [
         { role: 'system', content: systemPrompt },
         ...memory[userId].slice(-10),
       ];
 
       try {
-        // AIでの応答を取得
+        // ChatGPT（DeepSeek）にメッセージを送って返信をもらう
         const gptReply = await askDeepseek(messages);
 
-        // ユーザーに返信
+        // 履歴にやぴの返答も追加
         memory[userId].push({ role: 'assistant', content: gptReply });
-        await replyToLine(replyToken, gptReply);
 
-        // 定期的な追いLINE（自動再送）
-        handleFollowUpMessages(userId, replyToken);
+        // ↓↓↓ ここが重要：返信を10〜20秒遅らせてリアル感を出す！ ↓↓↓
+        const delay = Math.floor(Math.random() * 10 + 10) * 1000; // 10〜20秒（ミリ秒）
 
+        setTimeout(() => {
+          replyToLine(replyToken, gptReply); // 実際の返信処理（下の関数）
+        }, delay);
       } catch (err) {
         console.error('エラー:', err.message);
+
+        // エラーが出たときは「やぴっぽく」バグ演出でごまかす
         await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグったかも…！またすぐ返すわ！');
       }
     }
   }
 
+  // LINE側に「受け取ったよ」と返す（これしないと再送されちゃう）
   res.sendStatus(200);
 });
 
-// DeepSeek（OpenRouter）経由で会話
+
+// ChatGPT（DeepSeek）にメッセージを送って返答をもらう関数
 async function askDeepseek(messages) {
   try {
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'deepseek/deepseek-chat', // ← V3に対応！
+        model: 'deepseek/deepseek-chat', // Deepseekの最新モデルを使う
         messages,
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`, // APIキー
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://yourdomain.com', // 任意URL
-          'X-Title': 'yapIA Host Chat'
+          'HTTP-Referer': 'https://yourdomain.com', // 任意のURL（特に何でもOK）
+          'X-Title': 'yapIA Host Chat' // プロジェクト名（任意）
         },
       }
     );
+
+    // 返ってきた内容を整形して返す
     return response.data.choices[0].message.content.trim();
   } catch (error) {
     console.error('OpenRouterリクエスト失敗:', error.response?.data || error.message);
@@ -132,13 +141,13 @@ async function askDeepseek(messages) {
   }
 }
 
-// LINE返信
+// LINEに返信する関数（公式APIを叩いてる）
 async function replyToLine(replyToken, message) {
   await axios.post(
     'https://api.line.me/v2/bot/message/reply',
     {
       replyToken,
-      messages: [{ type: 'text', text: message }],
+      messages: [{ type: 'text', text: message }], // テキストメッセージを送信
     },
     {
       headers: {
@@ -149,23 +158,7 @@ async function replyToLine(replyToken, message) {
   );
 }
 
-// 追いLINEの送信
-function handleFollowUpMessages(userId, replyToken) {
-  const followUpMessages = [
-    "なにしてるのー！",
-    "かまって",
-    "はなそ",
-    "大丈夫？なにかあった？",
-    "ねね、いきてる？"
-  ];
-
-  // 時間経過で追いLINEを送る処理
-  setTimeout(() => {
-    const message = followUpMessages[Math.floor(Math.random() * followUpMessages.length)];
-    replyToLine(replyToken, message);
-  }, 1800000); // 30分後に追いLINE
-}
-
+// サーバーを起動（3000番ポートで待機）
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`仮想やぴBot（Deepseek対応・人格ver.）がポート${PORT}で稼働中🔥`);
