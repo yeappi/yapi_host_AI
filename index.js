@@ -6,7 +6,8 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const memory = {};
+const memory = {};  // ユーザーのメッセージ履歴を保持
+const userNames = {};  // ユーザーの名前を保持
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
@@ -27,6 +28,17 @@ app.post('/webhook', async (req, res) => {
 
       memory[userId] = memory[userId] || [];
       memory[userId].push({ role: 'user', content: userMessage });
+
+      // 名前を記憶しているかチェック
+      if (userMessage.toLowerCase().includes('名前は')) {
+        const name = userMessage.split(' ')[1];  // 名前を取得（単純化）
+        userNames[userId] = name;
+        await replyToLine(replyToken, `覚えた！君の名前は${name}だね`);
+        continue;
+      }
+
+      // ユーザーの名前がある場合は使う
+      const userName = userNames[userId] || '君';
 
       const systemPrompt = `
 あなたは「やぴ」という仮想のカリスマホストとしてダイレクトメッセージを送ります。
@@ -73,7 +85,6 @@ ENTPタイプで、相手と付き合う寸前の恋人ような距離感を保�
   「昨日見かけた店、君好みかも」
 
 目標：会話の流れで自然に「特別感」を感じさせる
-
       `.trim();
 
       const messages = [
@@ -82,9 +93,16 @@ ENTPタイプで、相手と付き合う寸前の恋人ような距離感を保�
       ];
 
       try {
+        // AIでの応答を取得
         const gptReply = await askDeepseek(messages);
+
+        // ユーザーに返信
         memory[userId].push({ role: 'assistant', content: gptReply });
         await replyToLine(replyToken, gptReply);
+
+        // 定期的な追いLINE（自動再送）
+        handleFollowUpMessages(userId, replyToken);
+
       } catch (err) {
         console.error('エラー:', err.message);
         await replyToLine(replyToken, 'やっべ、仮想やぴちょいバグったかも…！またすぐ返すわ！');
@@ -135,6 +153,23 @@ async function replyToLine(replyToken, message) {
       },
     }
   );
+}
+
+// 追いLINEの送信
+function handleFollowUpMessages(userId, replyToken) {
+  const followUpMessages = [
+    "なにしてるのー！",
+    "かまって",
+    "はなそ",
+    "大丈夫？なにかあった？",
+    "ねね、いきてる？"
+  ];
+
+  // 時間経過で追いLINEを送る処理
+  setTimeout(() => {
+    const message = followUpMessages[Math.floor(Math.random() * followUpMessages.length)];
+    replyToLine(replyToken, message);
+  }, 1800000); // 30分後に追いLINE
 }
 
 const PORT = process.env.PORT || 3000;
