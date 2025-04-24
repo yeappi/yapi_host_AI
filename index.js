@@ -72,7 +72,7 @@ async function askMixtral(messages) {
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'nousresearch/nous-hermes-2-mixtral',
+        model: 'nousresearch/nous-hermes-2-mixtral-8x7b-dpo'
         messages,
       },
       {
